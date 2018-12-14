@@ -15,6 +15,11 @@ class AccountAdmin(MPTTModelAdmin):
     raw_id_fields = (
         'parent',
     )
+    search_fields = (
+        'code',
+        'full_code',
+        'name',
+    )
 
     def code_(self, obj):
         if obj.is_leaf_node():
