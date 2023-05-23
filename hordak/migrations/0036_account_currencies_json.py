@@ -20,7 +20,7 @@ def copy_currencies_data(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("hordak", "0034_alter_account_currencies_alter_leg_amount_currency"),
+        ("hordak", "0035_runningtotal"),
     ]
 
     operations = [

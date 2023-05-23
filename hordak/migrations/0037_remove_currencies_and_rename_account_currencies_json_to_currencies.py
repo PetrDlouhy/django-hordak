@@ -7,7 +7,7 @@ import hordak
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("hordak", "0035_account_currencies_json"),
+        ("hordak", "0036_account_currencies_json"),
     ]
 
     operations = [

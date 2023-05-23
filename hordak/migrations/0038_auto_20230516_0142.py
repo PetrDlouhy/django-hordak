@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
     dependencies = [
         (
             "hordak",
-            "0036_remove_currencies_and_rename_account_currencies_json_to_currencies",
+            "0037_remove_currencies_and_rename_account_currencies_json_to_currencies",
         ),
     ]
 
