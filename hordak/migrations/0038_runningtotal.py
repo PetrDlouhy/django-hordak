@@ -9,7 +9,7 @@ import hordak.models.core
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("hordak", "0034_alter_account_currencies_alter_leg_amount_currency"),
+        ("hordak", "0037_auto_20230516_0142"),
     ]
 
     operations = [
