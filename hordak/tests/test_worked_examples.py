@@ -8,7 +8,6 @@ from hordak.models import Account, Leg, StatementImport, StatementLine, Transact
 from hordak.tests.utils import BalanceUtils, DataProvider
 from hordak.utilities.currency import Balance
 
-
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
 
