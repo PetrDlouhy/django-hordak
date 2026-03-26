@@ -40,12 +40,6 @@ class AccountAdmin(MPTTModelAdmin):
         "code",
         "full_code",
         "name",
-        "userprofile__email",
-        "subscribed_userprofile__email",
-        "userprofile__first_name",
-        "subscribed_userprofile__first_name",
-        "userprofile__last_name",
-        "subscribed_userprofile__last_name",
     )
     list_filter = ("type",)
     actions = [update_running_totals]
