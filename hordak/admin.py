@@ -1,6 +1,4 @@
 from django.contrib import admin
-from django.contrib.admin import SimpleListFilter
-from django.core.cache import cache
 from django.db.models import Prefetch, Q
 from mptt.admin import MPTTModelAdmin
 
@@ -19,11 +17,6 @@ except ImportError:
     legs_filter = Q(legs__amount__lt=0)
 
 
-def update_running_totals(modeladmin, request, queryset):
-    for account in queryset:
-        account.update_running_totals()
-
-
 @admin.register(models.Account)
 class AccountAdmin(MPTTModelAdmin):
     list_display = (
@@ -34,7 +27,7 @@ class AccountAdmin(MPTTModelAdmin):
         "balance_sum",
         "income",
     )
-    readonly_fields = ("balance", "balance_sum", "income")
+    readonly_fields = ("balance",)
     raw_id_fields = ("parent",)
     search_fields = (
         "code",
@@ -42,7 +35,6 @@ class AccountAdmin(MPTTModelAdmin):
         "name",
     )
     list_filter = ("type",)
-    actions = [update_running_totals]
 
     @admin.display(ordering="balance_sum")
     def balance(self, obj):
@@ -91,32 +83,6 @@ class LegInline(admin.TabularInline):
     extra = 0
 
 
-class CachedDescriptionFilter(SimpleListFilter):
-    # Cache description values to make the filter faster
-
-    title = "description"
-    parameter_name = "description"
-
-    def lookups(self, request, model_admin):
-        cached_filter_values = cache.get("transaction_description_filter_values")
-
-        if cached_filter_values is not None:
-            return [(desc, desc) for desc in cached_filter_values]
-
-        distinct_descriptions = model_admin.model.objects.values_list(
-            "description", flat=True
-        ).distinct()
-        cache.set(
-            "transaction_description_filter_values", list(distinct_descriptions), 3600
-        )  # Cache for 1 hour
-
-        return [(desc, desc) for desc in distinct_descriptions]
-
-    def queryset(self, request, queryset):
-        if self.value():
-            return queryset.filter(description=self.value())
-
-
 @admin.register(models.Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = [
@@ -130,7 +96,7 @@ class TransactionAdmin(admin.ModelAdmin):
         "description",
     ]
     list_filter = [
-        CachedDescriptionFilter,
+        "description",
     ]
     readonly_fields = ("timestamp",)
     search_fields = ("legs__account__name",)
