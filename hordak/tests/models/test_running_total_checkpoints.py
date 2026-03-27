@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction as db_transaction
 from django.db.models import Max
 from django.test import TestCase, override_settings
@@ -502,3 +504,230 @@ class AutoAdvanceCheckpointTests(DataProvider, TestCase):
         )
         self.assertGreater(latest_rt.includes_leg_id, initial_includes)
         self.assertEqual(account1.simple_balance(), account1._simple_balance_full_sum())
+
+
+class SignCorrectnessTests(DataProvider, TestCase):
+    """Verify checkpoint + delta gives identical results to full sum for every account type."""
+
+    def _make_pair_and_transact(self, type1, type2, amount):
+        a1 = self.account(type=type1)
+        a2 = self.account(type=type2)
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(transaction=txn, account=a1, amount=Money(amount, "EUR"))
+            Leg.objects.create(
+                transaction=txn, account=a2, amount=Money(-amount, "EUR")
+            )
+        a1.rebuild_running_totals()
+        a2.rebuild_running_totals()
+        with db_transaction.atomic():
+            txn2 = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn2, account=a1, amount=Money(amount / 2, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn2, account=a2, amount=Money(-amount / 2, "EUR")
+            )
+        return a1, a2
+
+    def test_expense_checkpoint_plus_delta(self):
+        expense, income = self._make_pair_and_transact(
+            Account.TYPES.expense, Account.TYPES.income, 100
+        )
+        self.assertEqual(expense.simple_balance(), expense._simple_balance_full_sum())
+        self.assertEqual(income.simple_balance(), income._simple_balance_full_sum())
+
+    def test_liability_checkpoint_plus_delta(self):
+        liability, asset = self._make_pair_and_transact(
+            Account.TYPES.liability, Account.TYPES.asset, 100
+        )
+        self.assertEqual(
+            liability.simple_balance(), liability._simple_balance_full_sum()
+        )
+        self.assertEqual(asset.simple_balance(), asset._simple_balance_full_sum())
+
+    def test_equity_checkpoint_plus_delta(self):
+        equity, asset = self._make_pair_and_transact(
+            Account.TYPES.equity, Account.TYPES.asset, 100
+        )
+        self.assertEqual(equity.simple_balance(), equity._simple_balance_full_sum())
+        self.assertEqual(asset.simple_balance(), asset._simple_balance_full_sum())
+
+    def test_advance_checkpoint_expense_account(self):
+        expense = self.account(type=Account.TYPES.expense)
+        income = self.account(type=Account.TYPES.income)
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=expense, amount=Money(100, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=income, amount=Money(-100, "EUR")
+            )
+        expense.rebuild_running_totals()
+        with db_transaction.atomic():
+            txn2 = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn2, account=expense, amount=Money(30, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn2, account=income, amount=Money(-30, "EUR")
+            )
+        expense.advance_checkpoint()
+        self.assertEqual(expense.simple_balance(), expense._simple_balance_full_sum())
+
+    def test_advance_checkpoint_liability_account(self):
+        liability = self.account(type=Account.TYPES.liability)
+        asset = self.account(type=Account.TYPES.asset)
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=liability, amount=Money(-200, "EUR")
+            )
+            Leg.objects.create(transaction=txn, account=asset, amount=Money(200, "EUR"))
+        liability.rebuild_running_totals()
+        with db_transaction.atomic():
+            txn2 = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn2, account=liability, amount=Money(-50, "EUR")
+            )
+            Leg.objects.create(transaction=txn2, account=asset, amount=Money(50, "EUR"))
+        liability.advance_checkpoint()
+        self.assertEqual(
+            liability.simple_balance(), liability._simple_balance_full_sum()
+        )
+
+
+class CheckRunningTotalsTests(DataProvider, TestCase):
+    def test_check_detects_corrupted_checkpoint(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(100, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-100, "EUR")
+            )
+        account1.rebuild_running_totals()
+        rt = account1.running_totals.get(currency="EUR")
+        RunningTotal.objects.filter(pk=rt.pk).update(balance=Money(999, "EUR"))
+
+        faulty = account1._check_running_totals()
+        self.assertEqual(len(faulty), 1)
+        currency, rt_value, correct_value = faulty[0]
+        self.assertEqual(currency, "EUR")
+        self.assertEqual(rt_value, Money(999, "EUR"))
+        self.assertEqual(correct_value, Money(100, "EUR"))
+
+    def test_check_returns_empty_when_correct(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(50, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-50, "EUR")
+            )
+        account1.rebuild_running_totals()
+        self.assertEqual(account1._check_running_totals(), [])
+
+    def test_check_detects_missing_running_total(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(75, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-75, "EUR")
+            )
+        faulty = account1._check_running_totals()
+        self.assertEqual(len(faulty), 1)
+        currency, rt_value, correct_value = faulty[0]
+        self.assertEqual(currency, "EUR")
+        self.assertIsNone(rt_value)
+        self.assertEqual(correct_value, Money(75, "EUR"))
+
+    def test_check_logs_warning_on_corruption(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(100, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-100, "EUR")
+            )
+        account1.rebuild_running_totals()
+        rt = account1.running_totals.get(currency="EUR")
+        RunningTotal.objects.filter(pk=rt.pk).update(balance=Money(999, "EUR"))
+
+        with self.assertLogs("hordak.models.core", level=logging.WARNING) as cm:
+            account1._check_running_totals()
+        self.assertTrue(any("Running totals difference" in msg for msg in cm.output))
+
+    def test_check_logs_warning_on_missing_total(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(50, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-50, "EUR")
+            )
+
+        with self.assertLogs("hordak.models.core", level=logging.WARNING) as cm:
+            account1._check_running_totals()
+        self.assertTrue(any("No running total" in msg for msg in cm.output))
+
+    def test_update_running_totals_check_only(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(100, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-100, "EUR")
+            )
+        account1.rebuild_running_totals()
+        rt = account1.running_totals.get(currency="EUR")
+        RunningTotal.objects.filter(pk=rt.pk).update(balance=Money(999, "EUR"))
+
+        faulty = account1.update_running_totals(check_only=True)
+        self.assertEqual(len(faulty), 1)
+        # check_only=True should NOT fix the running total
+        rt.refresh_from_db()
+        self.assertEqual(rt.balance, Money(999, "EUR"))
+
+    def test_update_running_totals_fixes_corruption(self):
+        account1 = self.account()
+        account2 = self.account()
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account1, amount=Money(100, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account2, amount=Money(-100, "EUR")
+            )
+        account1.rebuild_running_totals()
+        rt = account1.running_totals.get(currency="EUR")
+        RunningTotal.objects.filter(pk=rt.pk).update(balance=Money(999, "EUR"))
+
+        account1.update_running_totals(check_only=False)
+        new_rt = (
+            account1.running_totals.filter(currency="EUR")
+            .order_by("-includes_leg_id")
+            .first()
+        )
+        self.assertEqual(new_rt.balance, Money(100, "EUR"))

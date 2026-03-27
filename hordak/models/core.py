@@ -21,6 +21,8 @@ Additionally, there are models which related to the import of external bank stat
   create a transaction for the statement line.
 """
 
+import logging
+
 from django.db import connection, models
 from django.db import transaction
 from django.db import transaction as db_transaction
@@ -44,6 +46,8 @@ from hordak.defaults import (
 from hordak.utilities.currency import Balance
 from hordak.utilities.dreprecation import deprecated
 
+
+logger = logging.getLogger(__name__)
 
 #: Debit
 DEBIT = "debit"
@@ -627,7 +631,7 @@ class Account(MPTTModel):
             )
             if latest is None:
                 if correct.amount != 0:
-                    print(f"No running total for {self} ({currency})")
+                    logger.warning("No running total for %s (%s)", self, currency)
                     faulty_values.append((currency, None, correct))
                 continue
             delta_legs = self.legs.filter(
@@ -638,10 +642,15 @@ class Account(MPTTModel):
                 Balance([latest.balance]) + delta_legs.sum_to_balance() * self.sign
             )
             if implied[currency] != correct:
-                print(
-                    f"Running totals difference is {implied[currency] - correct} "
-                    f"(running total: {latest.balance}, effective: {implied[currency]}, total: {correct}) "
-                    f"for account {self}",
+                logger.warning(
+                    "Running totals difference is %s "
+                    "(running total: %s, effective: %s, total: %s) "
+                    "for account %s",
+                    implied[currency] - correct,
+                    latest.balance,
+                    implied[currency],
+                    correct,
+                    self,
                 )
                 faulty_values.append((currency, latest.balance, correct))
         return faulty_values
@@ -755,8 +764,6 @@ class LegQuerySet(models.QuerySet):
         max_leg_id = max((leg.pk for leg in result if leg.pk), default=None)
         if max_leg_id is None:
             return result
-
-        from hordak.models.core import RunningTotal
 
         latest_by_account = dict(
             RunningTotal.objects.filter(account_id__in=account_ids)
