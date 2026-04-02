@@ -1,3 +1,4 @@
+import django
 from django.contrib.auth import get_user_model
 from django.test.testcases import TestCase
 from django.urls import reverse
@@ -55,7 +56,17 @@ class AdminTestCase(DataProvider, TestCase):
             '?_changelist_filters=q%3DBank">Bank account</a>',
             html=True,
         )
-        self.assertContains(res, '<p class="paginator">1 account</p>', html=True)
+        if django.VERSION >= (6, 0):
+            self.assertContains(
+                res,
+                '<nav class="paginator" aria-labelledby="pagination">'
+                '<h2 id="pagination" class="visually-hidden">Pagination accounts</h2>'
+                "1 account"
+                "</nav>",
+                html=True,
+            )
+        else:
+            self.assertContains(res, '<p class="paginator">1 account</p>', html=True)
 
     def test_account_filter_query(self):
         """Test that filter query works"""
@@ -69,7 +80,17 @@ class AdminTestCase(DataProvider, TestCase):
             '?_changelist_filters=type__exact%3DAS">Bank account</a>',
             html=True,
         )
-        self.assertContains(res, '<p class="paginator">1 account</p>', html=True)
+        if django.VERSION >= (6, 0):
+            self.assertContains(
+                res,
+                '<nav class="paginator" aria-labelledby="pagination">'
+                '<h2 id="pagination" class="visually-hidden">Pagination accounts</h2>'
+                "1 account"
+                "</nav>",
+                html=True,
+            )
+        else:
+            self.assertContains(res, '<p class="paginator">1 account</p>', html=True)
 
     def test_account_filter_query_liability(self):
         """Test that filter query works"""
@@ -77,7 +98,17 @@ class AdminTestCase(DataProvider, TestCase):
         self.client.force_login(superuser)
         url = reverse("admin:hordak_account_changelist")
         res = self.client.get(url + "?type__exact=LI")
-        self.assertContains(res, '<p class="paginator">0 accounts</p>', html=True)
+        if django.VERSION >= (6, 0):
+            self.assertContains(
+                res,
+                '<nav class="paginator" aria-labelledby="pagination">'
+                '<h2 id="pagination" class="visually-hidden">Pagination accounts</h2>'
+                "0 accounts"
+                "</nav>",
+                html=True,
+            )
+        else:
+            self.assertContains(res, '<p class="paginator">0 accounts</p>', html=True)
 
     def test_account_edit(self):
         """Test account edit page"""

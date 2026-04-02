@@ -22,19 +22,39 @@ jobs:
 
     strategy:
       matrix:
-        DJANGO_VERSION: ['4.2.*', '5.0.*', '5.1.*']
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        DJANGO_VERSION: ['4.2.*', '5.0.*', '5.1.*', '6.0.*']
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
         import-export: ['3.3.5', '4.0.*']
         exclude:
+          - DJANGO_VERSION: '4.2.*'
+            python-version: '3.13'
+          - DJANGO_VERSION: '4.2.*'
+            python-version: '3.14'
+
           - DJANGO_VERSION: '5.0.*'
             python-version: '3.8'
           - DJANGO_VERSION: '5.0.*'
             python-version: '3.9'
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.13'
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.14'
 
           - DJANGO_VERSION: '5.1.*'
             python-version: '3.8'
           - DJANGO_VERSION: '5.1.*'
             python-version: '3.9'
+          - DJANGO_VERSION: '5.1.*'
+            python-version: '3.14'
+
+          - DJANGO_VERSION: '6.0.*'
+            python-version: '3.8'
+          - DJANGO_VERSION: '6.0.*'
+            python-version: '3.9'
+          - DJANGO_VERSION: '6.0.*'
+            python-version: '3.10'
+          - DJANGO_VERSION: '6.0.*'
+            python-version: '3.11'
       fail-fast: false
 
     services:
@@ -50,7 +70,7 @@ jobs:
         ports:
           - 5432:5432
       mariadb:
-        image: mariadb:10.5.21
+        image: ${{ contains(matrix.DJANGO_VERSION, '6.0') && 'mariadb:10.6' || 'mariadb:10.5.21' }}
         env:
           MARIADB_DATABASE: mariadb
           MYSQL_ALLOW_EMPTY_PASSWORD: yes
