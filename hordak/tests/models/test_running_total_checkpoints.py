@@ -575,7 +575,7 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
         self.assertIn("effective", stdout.getvalue())
         self.assertIn("should be", stdout.getvalue())
 
-    @override_settings(ADMINS=["admin@example.com"])
+    @override_settings(ADMINS=[("Admin", "admin@example.com")])
     def test_recalculate_running_totals_command_check_can_mail_admins(self):
         account = self.account(type=AccountType.income)
         offset = self.account(type=AccountType.income)
