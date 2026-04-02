@@ -2,10 +2,13 @@ import importlib
 from io import StringIO
 from unittest.mock import patch
 
+from django.core import mail
 from django.core.management import call_command
+from django.db import connection
 from django.db import transaction as db_transaction
 from django.test import override_settings
 from django.test.testcases import TransactionTestCase as DbTransactionTestCase
+from django.test.utils import CaptureQueriesContext
 from moneyed import Money
 
 from hordak.models import Account, AccountType, Leg, RunningTotal, Transaction
@@ -130,6 +133,30 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
             Balance([Money(10, "EUR"), Money(20, "USD")]),
         )
 
+    def test_get_simple_balance_avoids_distinct_leg_currency_scan(self):
+        account = self.account(type=AccountType.income, currencies=["EUR"])
+        offset = self.account(type=AccountType.income, currencies=["EUR"])
+
+        self._post(account, offset, 10, currency="EUR")
+        account.rebuild_running_totals()
+        account.currencies = ["EUR", "USD"]
+        account.save()
+        offset.currencies = ["EUR", "USD"]
+        offset.save()
+        self._post(account, offset, 20, currency="USD")
+
+        with CaptureQueriesContext(connection) as queries:
+            balance = account.get_simple_balance()
+
+        self.assertEqual(balance, Balance([Money(10, "EUR"), Money(20, "USD")]))
+        self.assertFalse(
+            any(
+                "SELECT DISTINCT" in query["sql"].upper()
+                and '"HORDak_leg"'.upper() in query["sql"].upper()
+                for query in queries.captured_queries
+            )
+        )
+
     def test_rebuild_running_totals_replaces_existing_history_by_default(self):
         account = self.account(type=AccountType.income)
         offset = self.account(type=AccountType.income)
@@ -153,6 +180,74 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
         account.rebuild_running_totals(keep_history=True)
 
         self.assertEqual(account.running_totals.filter(currency="EUR").count(), 2)
+
+    def test_append_running_totals_uses_leg_cutoff_for_full_sum(self):
+        account = self.account(type=AccountType.income)
+
+        with patch.object(
+            account, "_running_total_current_leg_id", return_value=42
+        ), patch.object(
+            account,
+            "_running_total_full_signed_balance",
+            return_value=Balance([Money(10, "EUR")]),
+        ) as full_balance_mock:
+            account._append_running_totals_from_full_sum()
+
+        full_balance_mock.assert_called_once_with(as_of_leg_id=42)
+        self.assertEqual(
+            account.running_totals.get(currency="EUR").includes_leg_id,
+            42,
+        )
+
+    def test_check_running_totals_reports_effective_balance(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+
+        self._post(account, offset, 10)
+        account.rebuild_running_totals()
+        self._post(account, offset, 5)
+        account.running_totals.update(balance=Money(999, "EUR"))
+
+        self.assertEqual(
+            account.check_running_totals(),
+            [("EUR", Money(1004, "EUR"), Money(15, "EUR"))],
+        )
+
+    def test_update_running_totals_check_only_preserves_rows(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+
+        self._post(account, offset, 10)
+        account.rebuild_running_totals()
+        account.running_totals.update(balance=Money(999, "EUR"))
+
+        faulty_values = account.update_running_totals(check_only=True)
+
+        self.assertEqual(
+            faulty_values,
+            [("EUR", Money(999, "EUR"), Money(10, "EUR"))],
+        )
+        self.assertEqual(
+            account.running_totals.get(currency="EUR").balance, Money(999, "EUR")
+        )
+
+    def test_update_running_totals_rebuilds_when_not_check_only(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+
+        self._post(account, offset, 10)
+        account.rebuild_running_totals()
+        account.running_totals.update(balance=Money(999, "EUR"))
+
+        faulty_values = account.update_running_totals()
+
+        self.assertEqual(
+            faulty_values,
+            [("EUR", Money(999, "EUR"), Money(10, "EUR"))],
+        )
+        self.assertEqual(
+            account.running_totals.get(currency="EUR").balance, Money(10, "EUR")
+        )
 
     def test_advance_checkpoint_noops_without_legs(self):
         account = self.account(type=AccountType.income)
@@ -447,6 +542,73 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
 
         self.assertEqual(
             account.running_totals.get(currency="EUR").balance, Money(12, "EUR")
+        )
+
+    def test_recalculate_running_totals_command_check_reports_missing_checkpoint(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        self._post(account, offset, 12)
+        stdout = StringIO()
+
+        call_command("recalculate_running_totals", "--check", stdout=stdout)
+
+        self.assertIn("Running totals are INCORRECT", stdout.getvalue())
+        self.assertIn(
+            f"Account {account.name} has no checkpoint for EUR", stdout.getvalue()
+        )
+        self.assertEqual(account.running_totals.count(), 0)
+
+    def test_recalculate_running_totals_command_check_reports_faulty_checkpoint(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        self._post(account, offset, 12)
+        account.rebuild_running_totals()
+        account.running_totals.update(balance=Money(999, "EUR"))
+        stdout = StringIO()
+
+        call_command("recalculate_running_totals", "--check", stdout=stdout)
+
+        self.assertIn(
+            f"Account {account.name} has faulty running total for EUR",
+            stdout.getvalue(),
+        )
+        self.assertIn("effective", stdout.getvalue())
+        self.assertIn("should be", stdout.getvalue())
+
+    @override_settings(ADMINS=["admin@example.com"])
+    def test_recalculate_running_totals_command_check_can_mail_admins(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        self._post(account, offset, 12)
+
+        call_command("recalculate_running_totals", "--check", "--mail-admins")
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("Running totals are incorrect", mail.outbox[0].subject)
+        self.assertIn(account.name, mail.outbox[0].body)
+
+    def test_recalculate_running_totals_command_check_reports_correct_state(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        self._post(account, offset, 12)
+        call_command("recalculate_running_totals", stdout=StringIO())
+        stdout = StringIO()
+
+        call_command("recalculate_running_totals", "--check", stdout=stdout)
+
+        self.assertEqual(stdout.getvalue().strip(), "Running totals are correct")
+
+    def test_recalculate_running_totals_command_rebuild_does_not_report_incorrect(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        self._post(account, offset, 12)
+        stdout = StringIO()
+
+        call_command("recalculate_running_totals", stdout=stdout)
+
+        self.assertNotIn("INCORRECT", stdout.getvalue())
+        self.assertIn(
+            "Rebuilt running total checkpoints for 2 accounts.", stdout.getvalue()
         )
 
     def test_recalculate_running_totals_command_can_keep_history(self):

@@ -414,9 +414,7 @@ class Account(MPTTModel):
                 **kwargs,
             )
 
-        checkpoints = {}
-        for running_total in self.running_totals.order_by("-includes_leg_id"):
-            checkpoints.setdefault(running_total.currency, running_total)
+        checkpoints = self._running_total_latest_checkpoints()
 
         if not checkpoints:
             return self._get_simple_balance_full_sum()
@@ -430,9 +428,7 @@ class Account(MPTTModel):
             balance += Balance([running_total.balance]) + delta
 
         covered_currencies = set(checkpoints)
-        for currency in (
-            self.legs.order_by().values_list("currency", flat=True).distinct()
-        ):
+        for currency in self.currencies:
             if currency in covered_currencies:
                 continue
             balance += self.legs.filter(currency=currency).sum_to_balance(
@@ -455,12 +451,31 @@ class Account(MPTTModel):
     def _running_total_current_leg_id(self):
         return self.legs.order_by("-id").values_list("id", flat=True).first() or 0
 
-    def _running_total_full_signed_balance(self):
-        return self._get_simple_balance_full_sum()
+    def _running_total_latest_checkpoints(self, as_of_leg_id=None):
+        running_totals = self.running_totals.order_by("-includes_leg_id")
+        if as_of_leg_id is not None:
+            running_totals = running_totals.filter(includes_leg_id__lte=as_of_leg_id)
 
-    def _append_running_totals_from_full_sum(self):
-        current_leg_id = self._running_total_current_leg_id()
-        for money in self._running_total_full_signed_balance().monies():
+        checkpoints = {}
+        for running_total in running_totals:
+            checkpoints.setdefault(running_total.currency, running_total)
+        return checkpoints
+
+    def _running_total_full_signed_balance(self, as_of_leg_id=None):
+        filters = {}
+        if as_of_leg_id is not None:
+            filters["id__lte"] = as_of_leg_id
+        return self._get_simple_balance_full_sum(**filters)
+
+    def _append_running_totals_from_full_sum(self, current_leg_id=None):
+        current_leg_id = (
+            self._running_total_current_leg_id()
+            if current_leg_id is None
+            else current_leg_id
+        )
+        for money in self._running_total_full_signed_balance(
+            as_of_leg_id=current_leg_id
+        ).monies():
             RunningTotal.objects.create(
                 account=self,
                 currency=money.currency.code,
@@ -471,9 +486,10 @@ class Account(MPTTModel):
     def rebuild_running_totals(self, keep_history=False):
         with db_transaction.atomic():
             Account.objects.select_for_update().filter(pk=self.pk).get()
+            current_leg_id = self._running_total_current_leg_id()
             if not keep_history:
                 self.running_totals.all().delete()
-            self._append_running_totals_from_full_sum()
+            self._append_running_totals_from_full_sum(current_leg_id=current_leg_id)
 
     def advance_checkpoint(self):
         with db_transaction.atomic():
@@ -483,12 +499,12 @@ class Account(MPTTModel):
             if not current_leg_id:
                 return
 
-            checkpoints = {}
-            for running_total in self.running_totals.order_by("-includes_leg_id"):
-                checkpoints.setdefault(running_total.currency, running_total)
+            checkpoints = self._running_total_latest_checkpoints(
+                as_of_leg_id=current_leg_id
+            )
 
             if not checkpoints:
-                self._append_running_totals_from_full_sum()
+                self._append_running_totals_from_full_sum(current_leg_id=current_leg_id)
                 return
 
             if all(
@@ -515,13 +531,7 @@ class Account(MPTTModel):
                 )
 
             covered_currencies = set(checkpoints)
-            uncovered_currencies = (
-                self.legs.filter(id__lte=current_leg_id)
-                .order_by()
-                .values_list("currency", flat=True)
-                .distinct()
-            )
-            for currency in uncovered_currencies:
+            for currency in self.currencies:
                 if currency in covered_currencies:
                     continue
 
@@ -536,6 +546,44 @@ class Account(MPTTModel):
                         balance=money,
                         includes_leg_id=current_leg_id,
                     )
+
+    def check_running_totals(self):
+        current_leg_id = self._running_total_current_leg_id()
+        checkpoints = self._running_total_latest_checkpoints(
+            as_of_leg_id=current_leg_id
+        )
+        correct = self._running_total_full_signed_balance(as_of_leg_id=current_leg_id)
+        faulty_values = []
+        all_currencies = (
+            set(self.currencies) | set(checkpoints) | set(correct.currencies())
+        )
+
+        for currency in all_currencies:
+            correct_value = correct[currency]
+            running_total = checkpoints.get(currency)
+            if running_total is None:
+                if correct_value.amount != 0:
+                    faulty_values.append((currency, None, correct_value))
+                continue
+
+            delta = self.legs.filter(
+                id__gt=running_total.includes_leg_id,
+                id__lte=current_leg_id,
+                currency=currency,
+            ).sum_to_balance(account_type=self.type)
+            effective_value = (Balance([running_total.balance]) + delta)[currency]
+            if effective_value != correct_value:
+                faulty_values.append((currency, effective_value, correct_value))
+
+        return faulty_values
+
+    def update_running_totals(self, check_only=False, keep_history=False):
+        faulty_values = self.check_running_totals()
+        if check_only:
+            return faulty_values
+
+        self.rebuild_running_totals(keep_history=keep_history)
+        return faulty_values
 
     def invalidate_running_totals(self):
         self.running_totals.all().delete()
