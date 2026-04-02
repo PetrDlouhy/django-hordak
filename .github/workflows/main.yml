@@ -22,9 +22,19 @@ jobs:
 
     strategy:
       matrix:
-        DJANGO_VERSION: ['4.2.*', '5.0.*']
-        python-version: ['3.10', '3.11', '3.12']
-        import-export: ['3.3.5', '4.0.0b2']
+        DJANGO_VERSION: ['4.2.*', '5.0.*', '5.1.*']
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        import-export: ['3.3.5', '4.0.*']
+        exclude:
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.8'
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.9'
+
+          - DJANGO_VERSION: '5.1.*'
+            python-version: '3.8'
+          - DJANGO_VERSION: '5.1.*'
+            python-version: '3.9'
       fail-fast: false
 
     services:
@@ -66,14 +76,32 @@ jobs:
            sudo apt-get install -y mariadb-client
            pip install -r requirements_test.txt
            pip install -e .
-           pip install git+https://github.com/jazzband/django-model-utils@master  # remove after new release of django-model-utils (>4.3.1)
            pip install Django==${{ matrix.DJANGO_VERSION }} --pre
            pip install django-import-export==${{ matrix.import-export }}
            pip install codecov
+           # Pin dj-database-url for Python 3.8 compatibility (3.1.0+ requires Python 3.9+)
+           if [ "${{ matrix.python-version }}" = "3.8" ]; then pip install "dj-database-url<3.0"; fi
 
-      - name: Check Migrations
+      - name: Check All Migrations Exist
         run: |
           PYTHONPATH=`pwd` ./manage.py makemigrations --check hordak
+
+      - name: Create missing migrations
+        if: ${{ failure() }}
+        run: |
+          PYTHONPATH=`pwd` ./manage.py makemigrations hordak
+
+      - name: Archive created migrations for debugging
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: created-migrations-${{ github.run_id }}-${{ strategy.job-index }}
+          path: hordak/migrations
+          if-no-files-found: error
+
+      - name: Test Fresh Installation (PostgreSQL) with configurable settings
+        run: |
+          PYTHONPATH=`pwd` python scripts/check_fresh_install_matrix.py
 
       - name: Testing (PostgreSQL)
         run: |

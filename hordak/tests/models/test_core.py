@@ -32,7 +32,6 @@ from hordak.models.core import project_currencies
 from hordak.tests.utils import DataProvider
 from hordak.utilities.currency import Balance
 
-
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
 

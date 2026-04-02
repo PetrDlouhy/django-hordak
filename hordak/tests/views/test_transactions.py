@@ -10,7 +10,6 @@ from hordak.models import Account, StatementImport, StatementLine, Transaction
 from hordak.tests.utils import DataProvider
 from hordak.utilities.currency import Balance
 
-
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
 
