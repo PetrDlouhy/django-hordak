@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 import hordak.defaults
 import hordak.models.core
-from hordak.defaults import DECIMAL_PLACES, MAX_DIGITS
+from hordak.defaults import DECIMAL_PLACES, DEFAULT_CURRENCY, MAX_DIGITS
 
 
 class Migration(migrations.Migration):
@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
                     "balance_currency",
                     djmoney.models.fields.CurrencyField(
                         choices=hordak.models.core.get_currency_choices(),
-                        default=hordak.defaults.default_currency,
+                        default=DEFAULT_CURRENCY,
                         editable=False,
                         max_length=3,
                         null=True,
@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
                     djmoney.models.fields.MoneyField(
                         blank=True,
                         decimal_places=DECIMAL_PLACES,
-                        default_currency=hordak.defaults.default_currency,
+                        default_currency=DEFAULT_CURRENCY,
                         max_digits=MAX_DIGITS,
                         null=True,
                     ),
