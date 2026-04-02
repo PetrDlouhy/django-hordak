@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from hordak.models import Account
+from hordak.models import Account, AccountType
 
 
 class Command(BaseCommand):
@@ -37,7 +37,7 @@ class Command(BaseCommand):
         delete_all = options.get("deleteall")
 
         if delete_all:
-            Account.objects.delete()
+            Account.objects.all().delete()
 
         accounts_exist = Account.objects.count()
 
@@ -60,7 +60,7 @@ class Command(BaseCommand):
 
         kw = dict(currencies=currencies)
         # Root accounts (level 0)
-        T = Account.TYPES
+        T = AccountType
         assets = Account.objects.create(name="Assets", code="1", type=T.asset, **kw)
         liabilities = Account.objects.create(
             name="Liabilities", code="2", type=T.liability, **kw
@@ -125,9 +125,9 @@ class Command(BaseCommand):
         )
         Account.objects.create(parent=equity, name="Retained Earnings", code="1", **kw)
         Account.objects.create(
-            parent=equity, name="Order Funds Introduced", code="2", **kw
+            parent=equity, name="Owner Funds Introduced", code="2", **kw
         )
-        Account.objects.create(parent=equity, name="Order Drawings", code="3", **kw)
+        Account.objects.create(parent=equity, name="Owner Drawings", code="3", **kw)
 
         # Income (level 1)
         Account.objects.create(parent=income, name="Sales", code="01", **kw)

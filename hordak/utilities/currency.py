@@ -43,6 +43,7 @@ Currency conversion makes use of Django's cache. It is therefore recommended tha
 .. _setup your Django cache: https://docs.djangoproject.com/en/1.10/topics/cache/
 
 """
+
 from __future__ import division
 
 import copy
@@ -66,7 +67,6 @@ from hordak.exceptions import (
     LossyCalculationError,
     TradingAccountRequiredError,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +130,10 @@ def currency_exchange(
 
         We should now find that:
 
-         1. ``cad_cash.balance()`` has decreased by ``CAD 120``
-         2. ``usd_cash.balance()`` has increased by ``USD 100``
-         3. ``banking_fees.balance()`` is ``CAD 1.50``
-         4. ``trading_account.balance()`` is ``USD 100, CAD -120``
+         1. ``cad_cash.get_balance()`` has decreased by ``CAD 120``
+         2. ``usd_cash.get_balance()`` has increased by ``USD 100``
+         3. ``banking_fees.get_balance()`` is ``CAD 1.50``
+         4. ``trading_account.get_balance()`` is ``USD 100, CAD -120``
 
         You can perform ``trading_account.normalise()`` to discover your unrealised gains/losses
         on currency traded through that account.
@@ -164,9 +164,9 @@ def currency_exchange(
     .. _test_currency.py:
         https://github.com/adamcharnock/django-hordak/blob/master/hordak/tests/utilities/test_currency.py
     """
-    from hordak.models import Account, Leg, Transaction
+    from hordak.models import AccountType, Leg, Transaction
 
-    if trading_account.type != Account.TYPES.trading:
+    if trading_account.type != AccountType.trading:
         raise TradingAccountRequiredError(
             "Account {} must be a trading account".format(trading_account)
         )
@@ -207,12 +207,12 @@ def currency_exchange(
 
         # Source currency into trading account
         Leg.objects.create(
-            transaction=transaction, account=source, amount=source_amount
+            transaction=transaction, account=source, credit=source_amount
         )
         Leg.objects.create(
             transaction=transaction,
             account=trading_account,
-            amount=-(
+            debit=(
                 (source_amount - fee_amount) if charge_fee_at_source else source_amount
             ),
         )
@@ -222,7 +222,7 @@ def currency_exchange(
             Leg.objects.create(
                 transaction=transaction,
                 account=fee_destination,
-                amount=-fee_amount,
+                debit=fee_amount,
                 description="Fees",
             )
 
@@ -230,14 +230,14 @@ def currency_exchange(
         Leg.objects.create(
             transaction=transaction,
             account=trading_account,
-            amount=(
+            credit=(
                 destination_amount
                 if charge_fee_at_source
                 else destination_amount + fee_amount
             ),
         )
         Leg.objects.create(
-            transaction=transaction, account=destination, amount=-destination_amount
+            transaction=transaction, account=destination, debit=destination_amount
         )
 
     return transaction
@@ -511,14 +511,16 @@ class Balance(object):
         return any([bool(m) for m in self._money_obs])
 
     def __eq__(self, other):
+        if isinstance(other, Money):
+            # If we have a money object then turn it into a balance
+            other = Balance([other])
+
         if other == 0:
             # Support comparing to integer/Decimal zero as it is useful
             return not self.__bool__()
         elif not isinstance(other, Balance):
-            raise TypeError(
-                "Can only compare Balance objects to other "
-                "Balance objects, not to type {}".format(type(other))
-            )
+            # It's not a balance, so it isn't going to be equal
+            return False
         return not self - other
 
     def __ne__(self, other):
@@ -539,10 +541,17 @@ class Balance(object):
         # -1, 0, and 1, and the values are different, then
         # just compare those.
         try:
+            # Will be -1, 0, or 1
             self_simplified = self._simplify()
             other_simplified = other._simplify()
+            # If simplified values are different then we can just compare them
             if self_simplified != other_simplified:
                 return self_simplified < other_simplified
+            # Also, if the simplified values are both 0, then we can return False
+            if self_simplified == 0 and other_simplified == 0:
+                return False
+            # So we now know that both currencies are positive, or both currencies
+            # are negative. In which case we need to do a smarter comparison.
         except CannotSimplifyError:
             pass
 
@@ -550,6 +559,9 @@ class Balance(object):
             # Shortcut if we have a single value with the same currency
             return self._money_obs[0] < other._money_obs[0]
         else:
+            # At this point we need to start doing currency conversions
+            # via normalise() in order to do the comparison (despite our
+            # above efforts to try to avoid this)
             money = self.normalise(defaults.INTERNAL_CURRENCY)._money_obs[0]
             other_money = other.normalise(defaults.INTERNAL_CURRENCY)._money_obs[0]
             return money < other_money

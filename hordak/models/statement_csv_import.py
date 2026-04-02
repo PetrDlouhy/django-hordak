@@ -4,22 +4,24 @@ from io import StringIO
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from django_smalluuid.models import SmallUUIDField, uuid_default
-from model_utils import Choices
 from tablib import Dataset
 
+from hordak.defaults import UUID_DEFAULT
 from hordak.utilities.statement_import import DATE_FORMATS
 
 
-class TransactionCsvImport(models.Model):
-    STATES = Choices(
-        ("pending", "Pending"),
-        ("uploaded", "Uploaded, ready to import"),
-        ("done", "Import complete"),
-    )
+class TransactionCsvImportState(models.TextChoices):
+    pending = "pending", _("Pending")
+    uploaded = "uploaded", _("Uploaded, ready to import")
+    done = "done", _("Import complete")
 
-    uuid = SmallUUIDField(
-        default=uuid_default(), editable=False, verbose_name=_("uuid")
+
+class TransactionCsvImport(models.Model):
+    # Warning: Will be removed in Hordak 3. Use TransactionCsvImportState directly instead.
+    STATES = TransactionCsvImportState
+
+    uuid = models.UUIDField(
+        default=UUID_DEFAULT, editable=False, verbose_name=_("uuid")
     )
     timestamp = models.DateTimeField(
         default=timezone.now, editable=False, verbose_name=_("timestamp")
@@ -31,7 +33,10 @@ class TransactionCsvImport(models.Model):
         upload_to="transaction_imports", verbose_name=_("CSV file to import")
     )
     state = models.CharField(
-        max_length=20, choices=STATES, default="pending", verbose_name=_("state")
+        max_length=20,
+        choices=TransactionCsvImportState.choices,
+        default="pending",
+        verbose_name=_("state"),
     )
     date_format = models.CharField(
         choices=DATE_FORMATS,
@@ -103,6 +108,15 @@ class TransactionCsvImport(models.Model):
         return Dataset(*data, headers=headers)
 
 
+class ToField(models.TextChoices):
+    none = "", "-- Do not import --"
+    date = "date", "Date"
+    amount = "amount", "Amount"
+    amount_out = "amount_out", "Amount (money out only)"
+    amount_in = "amount_in", "Amount (money in only)"
+    description = "description", "Description / Notes"
+
+
 class TransactionCsvImportColumn(models.Model):
     """Represents a column in an imported CSV file
 
@@ -110,14 +124,8 @@ class TransactionCsvImportColumn(models.Model):
     to our hordak.StatementLine models.
     """
 
-    TO_FIELDS = Choices(
-        (None, "-- Do not import --"),
-        ("date", "Date"),
-        ("amount", "Amount"),
-        ("amount_out", "Amount (money out only)"),
-        ("amount_in", "Amount (money in only)"),
-        ("description", "Description / Notes"),
-    )
+    # Warning: Will be removed in Hordak 3. Use ToField directly instead.
+    TO_FIELDS = ToField
 
     transaction_import = models.ForeignKey(
         TransactionCsvImport,
@@ -135,7 +143,7 @@ class TransactionCsvImportColumn(models.Model):
         blank=True,
         default=None,
         null=True,
-        choices=TO_FIELDS,
+        choices=ToField.choices,
         verbose_name=_("Is"),
     )
     example = models.CharField(

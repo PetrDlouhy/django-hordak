@@ -1,5 +1,6 @@
-from django.conf import settings
+from uuid import uuid4
 
+from django.conf import settings
 
 INTERNAL_CURRENCY = getattr(settings, "HORDAK_INTERNAL_CURRENCY", "EUR")
 
@@ -16,16 +17,10 @@ def default_currency():
 CURRENCIES = getattr(settings, "HORDAK_CURRENCIES", getattr(settings, "CURRENCIES", []))
 
 
-# Expected to be an array of currencies ["EUR", "USD", "GBP"]
-def project_currencies() -> list:
-    project_currs = CURRENCIES
-
-    if callable(project_currs):
-        return project_currs()
-
-    return project_currs
-
-
 DECIMAL_PLACES = getattr(settings, "HORDAK_DECIMAL_PLACES", 2)
 
-MAX_DIGITS = getattr(settings, "HORDAK_MAX_DIGITS", 13)
+MAX_DIGITS = getattr(settings, "HORDAK_MAX_DIGITS", 20)
+
+UUID_DEFAULT = getattr(settings, "HORDAK_UUID_DEFAULT", uuid4)
+
+CHECKPOINT_THRESHOLD = getattr(settings, "HORDAK_CHECKPOINT_THRESHOLD", 0)

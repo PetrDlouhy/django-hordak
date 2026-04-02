@@ -7,8 +7,7 @@ from django.db import migrations
 
 def create_trigger(apps, schema_editor):
     if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute(
-            """
+        schema_editor.execute("""
             CREATE OR REPLACE FUNCTION check_leg()
                 RETURNS trigger AS
             $$
@@ -32,6 +31,7 @@ def create_trigger(apps, schema_editor):
                     LIMIT 1;
 
                 IF FOUND THEN
+                    -- TODO: Include transaction id in exception message below (see #93)
                     RAISE EXCEPTION 'Sum of transaction amounts in each currency must be 0. Currency %% has non-zero total %%',
                         non_zero.currency, non_zero.total;
                 END IF;
@@ -41,13 +41,11 @@ def create_trigger(apps, schema_editor):
             $$
             LANGUAGE plpgsql;
 
-        """
-        )
+        """)
 
     elif schema_editor.connection.vendor == "mysql":
-        # we have to call this procedure in Leg.on_commit, because MySQL does not support deferred triggers
-        schema_editor.execute(
-            """
+        # we have to call this procedure in python via mysql_simulate_trigger(), because MySQL does not support deferred triggers
+        schema_editor.execute("""
             CREATE OR REPLACE PROCEDURE check_leg(_transaction_id INT)
             BEGIN
             DECLARE transaction_sum DECIMAL(13, 2);
@@ -68,8 +66,7 @@ def create_trigger(apps, schema_editor):
             END IF;
 
             END
-        """
-        )
+        """)
     else:
         raise NotImplementedError(
             "Database vendor %s not supported" % schema_editor.connection.vendor
@@ -79,8 +76,7 @@ def create_trigger(apps, schema_editor):
 def create_trigger_reverse(apps, schema_editor):
     if schema_editor.connection.vendor == "postgresql":
         # As per migration 0002
-        schema_editor.execute(
-            """
+        schema_editor.execute("""
             CREATE OR REPLACE FUNCTION check_leg()
                 RETURNS trigger AS
             $$
@@ -101,8 +97,7 @@ def create_trigger_reverse(apps, schema_editor):
             END;
             $$
             LANGUAGE plpgsql
-        """
-        )
+        """)
 
     elif schema_editor.connection.vendor == "mysql":
         schema_editor.execute("DROP PROCEDURE IF EXISTS check_leg")

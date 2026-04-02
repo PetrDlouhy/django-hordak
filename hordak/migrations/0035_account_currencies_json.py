@@ -3,6 +3,7 @@
 from django.db import migrations, models
 
 import hordak
+from hordak.defaults import DEFAULT_CURRENCY
 
 
 def copy_currencies_data(apps, schema_editor):
@@ -14,19 +15,15 @@ def copy_currencies_data(apps, schema_editor):
             # only run this if there is data in the table (in which case we have an ARRAY to migrate);
             # disregard if migrations are being run on a fresh database
             if Account.objects.count() > 0:
-                cursor.execute(
-                    f"""
+                cursor.execute(f"""
                     UPDATE {table_name}
                     SET currencies_json = array_to_json(currencies)::jsonb;
-                """
-                )
+                """)
             else:
-                cursor.execute(
-                    f"""
+                cursor.execute(f"""
                     UPDATE {table_name}
                     SET currencies_json = currencies;
-                """
-                )
+                """)
 
 
 def copy_currencies_data_reverse(apps, schema_editor):
@@ -37,12 +34,10 @@ def copy_currencies_data_reverse(apps, schema_editor):
             # only run this if there is data in the table (in which case we have an ARRAY to migrate);
             # disregard if migrations are being run on a fresh database
             if Account.objects.count() > 0:
-                cursor.execute(
-                    f"""
+                cursor.execute(f"""
                     UPDATE {table_name}
                     SET currencies = (array_agg(ary)::text[] FROM jsonb_array_elements_text(currencies_json) as ary)
-                """
-                )
+                """)
 
 
 class Migration(migrations.Migration):
@@ -56,7 +51,7 @@ class Migration(migrations.Migration):
             name="currencies_json",
             field=models.JSONField(
                 db_index=True,
-                default=hordak.defaults.project_currencies,
+                default=(DEFAULT_CURRENCY,),
             ),
         ),
         migrations.RunPython(copy_currencies_data, copy_currencies_data_reverse),

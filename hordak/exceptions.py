@@ -75,3 +75,37 @@ class CannotSimplifyError(HordakError):
     """Used internally by Currency class"""
 
     pass
+
+
+class NoMoreAccountCodesAvailableInSequence(HordakError):
+    """Raised when all account codes in a sequence have been generated
+
+    For example, we cannot generate an account code after "999". Or,
+    when using alpha characters, after "ZZZ".
+    """
+
+    pass
+
+
+class InvalidOrMissingAccountTypeError(Exception):
+    """When an unexpected account type is encountered"""
+
+    pass
+
+
+class NeitherCreditNorDebitPresentError(Exception):
+    """When neither credit nor debit present for a Leg"""
+
+    pass
+
+
+class BothCreditAndDebitPresentError(Exception):
+    """When both credit and debit present for a Leg"""
+
+    pass
+
+
+class CreditOrDebitIsNegativeError(Exception):
+    """When either the credit and debit field of a Leg is negative"""
+
+    pass

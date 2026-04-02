@@ -6,10 +6,9 @@ from django.test import TestCase
 from django.urls import reverse
 from moneyed import Money
 
-from hordak.models import Account, StatementImport, StatementLine, Transaction
+from hordak.models import AccountType, StatementImport, StatementLine, Transaction
 from hordak.tests.utils import DataProvider
 from hordak.utilities.currency import Balance
-
 
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
@@ -19,9 +18,9 @@ class TransactionCreateViewTestCase(DataProvider, TestCase):
         self.view_url = reverse("hordak:transactions_create")
         self.login()
 
-        self.bank_account = self.account(is_bank_account=True, type=Account.TYPES.asset)
+        self.bank_account = self.account(is_bank_account=True, type=AccountType.asset)
         self.income_account = self.account(
-            is_bank_account=False, type=Account.TYPES.income
+            is_bank_account=False, type=AccountType.income
         )
 
     def test_get(self):
@@ -42,8 +41,8 @@ class TransactionCreateViewTestCase(DataProvider, TestCase):
         response = self.client.post(
             self.view_url,
             data=dict(
-                from_account=self.bank_account.uuid,
-                to_account=self.income_account.uuid,
+                debit_account=self.bank_account.uuid,
+                credit_account=self.income_account.uuid,
                 amount_0="123.45",
                 amount_1="EUR",
                 date="2000-06-15",
@@ -52,8 +51,8 @@ class TransactionCreateViewTestCase(DataProvider, TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/")
-        self.assertEqual(self.bank_account.balance(), Balance("123.45", "EUR"))
-        self.assertEqual(self.income_account.balance(), Balance("123.45", "EUR"))
+        self.assertEqual(self.bank_account.get_balance(), Balance("-123.45", "EUR"))
+        self.assertEqual(self.income_account.get_balance(), Balance("-123.45", "EUR"))
 
         transaction = Transaction.objects.get()
         self.assertEqual(str(transaction.date), "2000-06-15")
@@ -65,10 +64,10 @@ class TransactionDeleteViewTestCase(DataProvider, TestCase):
         self.login()
 
         self.bank_account = self.account(
-            is_bank_account=True, type=Account.TYPES.asset, currencies=["GBP"]
+            is_bank_account=True, type=AccountType.asset, currencies=["GBP"]
         )
         self.income_account = self.account(
-            is_bank_account=False, type=Account.TYPES.income, currencies=["GBP"]
+            is_bank_account=False, type=AccountType.income, currencies=["GBP"]
         )
         self.transaction = self.bank_account.transfer_to(
             self.income_account, Money(100, "GBP")
@@ -94,24 +93,24 @@ class CurrencyTradeView(DataProvider, TestCase):
         self.login()
 
         self.account_gbp = self.account(
-            name="GBP", type=Account.TYPES.asset, currencies=["GBP"]
+            name="GBP", type=AccountType.asset, currencies=["GBP"]
         )
         self.account_eur = self.account(
-            name="EUR", type=Account.TYPES.asset, currencies=["EUR"]
+            name="EUR", type=AccountType.asset, currencies=["EUR"]
         )
         self.account_usd = self.account(
-            name="USD", type=Account.TYPES.asset, currencies=["USD"]
+            name="USD", type=AccountType.asset, currencies=["USD"]
         )
 
         self.trading_gbp_eur = self.account(
-            name="GBP, EUR", type=Account.TYPES.trading, currencies=["GBP", "EUR"]
+            name="GBP, EUR", type=AccountType.trading, currencies=["GBP", "EUR"]
         )
         self.trading_eur_usd = self.account(
-            name="EUR, USD", type=Account.TYPES.trading, currencies=["EUR", "USD"]
+            name="EUR, USD", type=AccountType.trading, currencies=["EUR", "USD"]
         )
         self.trading_all = self.account(
             name="GBP, EUR, USD",
-            type=Account.TYPES.trading,
+            type=AccountType.trading,
             currencies=["GBP", "EUR", "USD"],
         )
 
@@ -135,11 +134,11 @@ class CurrencyTradeView(DataProvider, TestCase):
             ),
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.account_gbp.balance(), Balance("-100", "GBP"))
+        self.assertEqual(self.account_gbp.get_balance(), Balance("-100", "GBP"))
         self.assertEqual(
-            self.trading_gbp_eur.balance(), Balance("-100", "GBP", "110", "EUR")
+            self.trading_gbp_eur.get_balance(), Balance("-100", "GBP", "110", "EUR")
         )
-        self.assertEqual(self.account_eur.balance(), Balance("110", "EUR"))
+        self.assertEqual(self.account_eur.get_balance(), Balance("110", "EUR"))
 
 
 class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
@@ -149,10 +148,10 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
 
     def create_statement_import(self, **kwargs):
         self.bank_account = self.account(
-            is_bank_account=True, type=Account.TYPES.asset, **kwargs
+            is_bank_account=True, type=AccountType.asset, **kwargs
         )
         self.income_account = self.account(
-            is_bank_account=False, type=Account.TYPES.income, **kwargs
+            is_bank_account=False, type=AccountType.income, **kwargs
         )
 
         statement_import = StatementImport.objects.create(
@@ -244,10 +243,10 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
         leg_in = transaction.legs.get(account=self.bank_account)
         leg_out = transaction.legs.get(account=self.income_account)
 
-        self.assertEqual(leg_in.amount, Money("-100.16", "EUR"))
+        self.assertEqual(leg_in.debit, Money("100.16", "EUR"))
         self.assertEqual(leg_in.account, self.bank_account)
 
-        self.assertEqual(leg_out.amount, Money("100.16", "EUR"))
+        self.assertEqual(leg_out.credit, Money("100.16", "EUR"))
         self.assertEqual(leg_out.account, self.income_account)
 
         self.assertNotIn("leg_formset", response.context)
@@ -287,8 +286,8 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
         leg_in = transaction.legs.get(account=self.bank_account)
         leg_out = transaction.legs.get(account=self.income_account)
 
-        self.assertEqual(leg_in.amount, Money("-100.16", "GBP"))
-        self.assertEqual(leg_out.amount, Money("100.16", "GBP"))
+        self.assertEqual(leg_in.debit, Money("100.16", "GBP"))
+        self.assertEqual(leg_out.credit, Money("100.16", "GBP"))
 
     def test_post_reconcile_valid_two(self):
         self.create_statement_import()
@@ -338,7 +337,7 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
 
         leg_formset = response.context["leg_formset"]
         self.assertEqual(
-            leg_formset.non_form_errors(), ["Amounts must add up to 100.160000"]
+            leg_formset.non_form_errors(), ["Amounts must add up to 100.16"]
         )
         self.assertIn("Amounts must add up to 100.16", response.content.decode("utf8"))
 
@@ -395,6 +394,7 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
         response = self.client.post(
             self.view_url,
             data={
+                # Amount of this line is negative
                 "reconcile": self.line2.uuid,
                 "description": "Test transaction",
                 "legs-INITIAL_FORMS": "0",
@@ -416,9 +416,9 @@ class ReconcileTransactionsViewTestCase(DataProvider, TestCase):
 
 class UnreconcileTransactionsViewTestCase(DataProvider, TestCase):
     def setUp(self):
-        self.bank_account = self.account(is_bank_account=True, type=Account.TYPES.asset)
+        self.bank_account = self.account(is_bank_account=True, type=AccountType.asset)
         self.income_account = self.account(
-            is_bank_account=False, type=Account.TYPES.income
+            is_bank_account=False, type=AccountType.income
         )
 
         statement_import = StatementImport.objects.create(

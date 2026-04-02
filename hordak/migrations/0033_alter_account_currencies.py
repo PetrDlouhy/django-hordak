@@ -3,6 +3,7 @@
 from django.db import migrations, models
 
 import hordak.models
+from hordak.defaults import DEFAULT_CURRENCY
 
 
 class Migration(migrations.Migration):
@@ -15,7 +16,7 @@ class Migration(migrations.Migration):
             model_name="account",
             name="currencies",
             field=models.JSONField(
-                default=hordak.models.core.project_currencies,
+                default=(DEFAULT_CURRENCY,),
                 verbose_name="currencies",
             ),
         ),

@@ -1,7 +1,7 @@
 .. _api_models:
 
-Models
-======
+Models (Core)
+=============
 
 .. contents::
 
@@ -11,6 +11,10 @@ Account
 -------
 
 .. autoclass:: hordak.models.Account
+    :members:
+
+
+.. autoclass:: hordak.models.AccountQuerySet
     :members:
 
 Transaction
@@ -25,14 +29,19 @@ Leg
 .. autoclass:: hordak.models.Leg
     :members:
 
-StatementImport
----------------
-
-.. autoclass:: hordak.models.StatementImport
+.. autoclass:: hordak.models.LegQuerySet
     :members:
 
-StatementLine
--------------
 
-.. autoclass:: hordak.models.StatementLine
+LegView (Database View)
+-----------------------
+
+.. autoclass:: hordak.models.LegView
+    :members:
+
+
+TransactionView (Database View)
+-------------------------------
+
+.. autoclass:: hordak.models.TransactionView
     :members:

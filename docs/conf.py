@@ -19,7 +19,7 @@
 #
 import os
 import sys
-
+from datetime import datetime
 
 # sys.path.insert(0, os.path.abspath('.'))
 
@@ -27,7 +27,6 @@ hordak_dir = os.path.abspath("..")
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "example_project.settings")
 sys.path.insert(0, hordak_dir)
 import django  # noqa E402
-
 
 django.setup()
 
@@ -40,7 +39,7 @@ django.setup()
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon"]
+extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "sphinxcontrib.jquery"]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -56,7 +55,7 @@ master_doc = "index"
 
 # General information about the project.
 project = "Django Hordak"
-copyright = "2016, Adam Charnock"
+copyright = f"2016-{datetime.today().year}, Adam Charnock"
 author = "Adam Charnock"
 
 # The version info for the project you're documenting, acts as replacement for
@@ -73,7 +72,7 @@ release = "1.0"
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = "en"
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -93,7 +92,6 @@ todo_include_todos = False
 # a list of builtin themes.
 #
 import sphinx_rtd_theme  # noqa E402
-
 
 html_theme = "sphinx_rtd_theme"
 
