@@ -629,27 +629,28 @@ class Account(MPTTModel):
                 self.running_totals.all().delete()
             self._append_running_totals_from_full_sum(current_leg_id=current_leg_id)
 
+    def invalidate_running_totals(self):
+        self.running_totals.all().delete()
+
     def check_running_totals(self):
-        faulty_values = []
+        """Check consistency of existing checkpoints against full-sum balances.
+
+        Only reports currencies where a checkpoint exists but is incorrect.
+        Missing checkpoints are not reported — the read path falls back to
+        full-sum correctly, so absence is a performance concern, not a data error.
+        """
         current_leg_id = self._running_total_current_leg_id()
         checkpoints = self._running_total_latest_checkpoints(
             as_of_leg_id=current_leg_id
         )
-        correct = self._running_total_full_signed_balance(as_of_leg_id=current_leg_id)
-        all_currencies = (
-            set(self.currencies)
-            | set(checkpoints)
-            | {money.currency.code for money in correct.monies()}
-        )
+        if not checkpoints:
+            return []
 
-        for currency in all_currencies:
+        correct = self._running_total_full_signed_balance(as_of_leg_id=current_leg_id)
+        faulty_values = []
+
+        for currency, running_total in checkpoints.items():
             correct_value = correct[currency]
-            running_total = checkpoints.get(currency)
-            if running_total is None:
-                if correct_value.amount != 0:
-                    logger.warning("No running total for %s (%s)", self, currency)
-                    faulty_values.append((currency, None, correct_value))
-                continue
             delta_legs = self.legs.filter(
                 models.Q(id__gt=running_total.includes_leg_id)
                 & models.Q(id__lte=current_leg_id)

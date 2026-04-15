@@ -719,7 +719,7 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
         account1.rebuild_running_totals()
         self.assertEqual(account1._check_running_totals(), [])
 
-    def test_check_detects_missing_running_total(self):
+    def test_check_ignores_missing_running_total(self):
         account1 = self.account()
         account2 = self.account()
         with db_transaction.atomic():
@@ -731,11 +731,7 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
                 transaction=txn, account=account2, amount=Money(-75, "EUR")
             )
         faulty = account1._check_running_totals()
-        self.assertEqual(len(faulty), 1)
-        currency, rt_value, correct_value = faulty[0]
-        self.assertEqual(currency, "EUR")
-        self.assertIsNone(rt_value)
-        self.assertEqual(correct_value, Money(75, "EUR"))
+        self.assertEqual(faulty, [])
 
     def test_check_logs_warning_on_corruption(self):
         account1 = self.account()
@@ -756,7 +752,7 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
             account1._check_running_totals()
         self.assertTrue(any("Running totals difference" in msg for msg in cm.output))
 
-    def test_check_logs_warning_on_missing_total(self):
+    def test_check_no_warning_on_missing_total(self):
         account1 = self.account()
         account2 = self.account()
         with db_transaction.atomic():
@@ -767,10 +763,8 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
             Leg.objects.create(
                 transaction=txn, account=account2, amount=Money(-50, "EUR")
             )
-
-        with self.assertLogs("hordak.models.core", level=logging.WARNING) as cm:
-            account1._check_running_totals()
-        self.assertTrue(any("No running total" in msg for msg in cm.output))
+        faulty = account1._check_running_totals()
+        self.assertEqual(faulty, [])
 
     def test_update_running_totals_check_only(self):
         account1 = self.account()
