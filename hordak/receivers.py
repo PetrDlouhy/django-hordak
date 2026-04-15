@@ -1,21 +1,38 @@
-from django.db.models.signals import post_delete, post_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
 from hordak import defaults
 from hordak.models import Account, Leg
 
 
+@receiver(pre_save, sender=Leg)
+def remember_leg_account_before_save(sender, instance, **kwargs):
+    if instance.pk is None:
+        instance._running_total_previous_account_id = None
+        return
+
+    instance._running_total_previous_account_id = (
+        Leg.objects.filter(pk=instance.pk).values_list("account_id", flat=True).first()
+    )
+
+
 @receiver(post_save, sender=Leg)
-def recompute_running_totals_on_leg_save(sender, instance, created, **kwargs):
+def maintain_running_totals_on_leg_save(sender, instance, created, **kwargs):
+    account = Account.objects.get(pk=instance.account_id)
+    previous_account_id = getattr(instance, "_running_total_previous_account_id", None)
+
     if not created:
-        Account.objects.get(pk=instance.account_id).rebuild_running_totals()
+        if previous_account_id and previous_account_id != instance.account_id:
+            previous_account = Account.objects.filter(pk=previous_account_id).first()
+            if previous_account is not None:
+                previous_account.invalidate_running_totals()
+        account.invalidate_running_totals()
         return
 
     threshold = defaults.CHECKPOINT_THRESHOLD
     if not threshold:
         return
 
-    account = Account.objects.get(pk=instance.account_id)
     latest = (
         account.running_totals.filter(currency=instance.amount_currency)
         .order_by("-includes_leg_id")
@@ -29,5 +46,7 @@ def recompute_running_totals_on_leg_save(sender, instance, created, **kwargs):
 
 
 @receiver(post_delete, sender=Leg)
-def recompute_running_totals_on_leg_delete(sender, instance, **kwargs):
-    Account.objects.get(pk=instance.account_id).rebuild_running_totals()
+def maintain_running_totals_on_leg_delete(sender, instance, **kwargs):
+    account = Account.objects.filter(pk=instance.account_id).first()
+    if account is not None:
+        account.invalidate_running_totals()

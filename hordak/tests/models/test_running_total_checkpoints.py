@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 from django.db import connection
 from django.db import transaction as db_transaction
-from django.db.models import Max
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from moneyed.classes import Money
@@ -67,7 +66,7 @@ class RunningTotalCheckpointTests(DataProvider, TestCase):
         )
         self.assertEqual(before, after)
 
-    def test_recompute_on_leg_update(self):
+    def test_invalidate_on_leg_update(self):
         account1 = self.account()
         account2 = self.account()
         with db_transaction.atomic():
@@ -79,23 +78,17 @@ class RunningTotalCheckpointTests(DataProvider, TestCase):
                 transaction=txn, account=account2, amount=Money(-40, "EUR")
             )
         account1.update_running_totals()
+        self.assertTrue(account1.running_totals.exists())
         with db_transaction.atomic():
             leg.amount = Money(70, "EUR")
             leg.save()
             other = Leg.objects.get(account=account2, transaction=leg.transaction)
             other.amount = Money(-70, "EUR")
             other.save()
-        account1.refresh_from_db()
-        rt = (
-            account1.running_totals.filter(currency="EUR")
-            .order_by("-includes_leg_id")
-            .first()
-        )
-        self.assertEqual(rt.balance, Money(70, "EUR"))
-        max_id = Leg.objects.filter(account=account1).aggregate(m=Max("id"))["m"]
-        self.assertEqual(rt.includes_leg_id, max_id)
+        self.assertFalse(account1.running_totals.exists())
+        self.assertEqual(account1.simple_balance(), Balance(70, "EUR"))
 
-    def test_recompute_on_leg_delete(self):
+    def test_invalidate_on_leg_delete(self):
         account1 = self.account()
         account2 = self.account()
         with db_transaction.atomic():
@@ -107,13 +100,10 @@ class RunningTotalCheckpointTests(DataProvider, TestCase):
                 transaction=txn, account=account2, amount=Money(-30, "EUR")
             )
         account1.update_running_totals()
+        self.assertTrue(account1.running_totals.exists())
         Transaction.objects.filter(legs__account=account1).delete()
-        rt = (
-            account1.running_totals.filter(currency="EUR")
-            .order_by("-includes_leg_id")
-            .first()
-        )
-        self.assertEqual(rt.balance.amount, 0)
+        self.assertFalse(account1.running_totals.exists())
+        self.assertEqual(account1.simple_balance(), Balance(0, "EUR"))
 
     def test_latest_checkpoint_used_when_multiple_exist(self):
         account1 = self.account()
