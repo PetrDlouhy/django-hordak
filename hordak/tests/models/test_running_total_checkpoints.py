@@ -1,9 +1,10 @@
 import logging
+import threading
 from unittest.mock import patch
 
 from django.db import connection
 from django.db import transaction as db_transaction
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from moneyed.classes import Money
 
@@ -799,3 +800,149 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
             .first()
         )
         self.assertEqual(new_rt.balance, Money(100, "EUR"))
+
+
+class UncommittedLegCutoffTests(DataProvider, TransactionTestCase):
+    """A checkpoint must never claim to include a leg it could not see.
+
+    A transaction holding *lower* leg ids can commit after a checkpoint is
+    written; because every checkpoint builds on the previous balance, the
+    omitted legs would be excluded from every later balance permanently, as
+    a constant offset. select_for_update() does not protect against this
+    (deferred foreign keys mean inserters take no account lock until
+    commit) and bulk_create sends no signals. Observed twice in production
+    as a constant offset on one hot account, created by a nightly batch
+    job's insert bursts.
+    """
+
+    def _post(self, account_from, account_to, amount):
+        with db_transaction.atomic():
+            txn = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=txn, account=account_from, amount=Money(amount, "EUR")
+            )
+            Leg.objects.create(
+                transaction=txn, account=account_to, amount=Money(-amount, "EUR")
+            )
+
+    def _bulk_post(self, account_from, account_to, amount):
+        txn = Transaction.objects.create()
+        Leg.objects.bulk_create(
+            [
+                Leg(transaction=txn, account=account_from, amount=Money(amount, "EUR")),
+                Leg(transaction=txn, account=account_to, amount=Money(-amount, "EUR")),
+            ]
+        )
+
+    def _run(self, *workers):
+        threads = [threading.Thread(target=worker) for worker in workers]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        self.assertFalse(
+            any(thread.is_alive() for thread in threads),
+            "workers did not finish -- likely deadlocked",
+        )
+
+    def _straggler(self, account_from, account_to, inserted, release):
+        def worker():
+            try:
+                with db_transaction.atomic():
+                    self._bulk_post(account_from, account_to, 5)
+                    inserted.set()
+                    release.wait(timeout=30)
+            finally:
+                inserted.set()
+                connection.close()
+
+        return worker
+
+    @override_settings(HORDAK_CHECKPOINT_THRESHOLD=2)
+    def test_advance_does_not_skip_an_uncommitted_bulk_create(self):
+        account = self.account()
+        offset = self.account()
+        self._post(account, offset, 10)
+        account.rebuild_running_totals()
+
+        inserted = threading.Event()
+        advanced = threading.Event()
+
+        def advancer():
+            try:
+                inserted.wait(timeout=30)
+                for _ in range(4):
+                    self._post(account, offset, 1)
+            finally:
+                advanced.set()
+                connection.close()
+
+        self._run(self._straggler(account, offset, inserted, advanced), advancer)
+
+        self.assertEqual(account.check_running_totals(), [])
+        expected = (10 + 5 + 4) * account.sign
+        self.assertEqual(
+            account.simple_balance(), Balance([Money(expected, "EUR")])
+        )
+
+    @override_settings(HORDAK_CHECKPOINT_THRESHOLD=0)
+    def test_rebuild_does_not_skip_an_uncommitted_bulk_create(self):
+        account = self.account()
+        offset = self.account()
+        self._post(account, offset, 10)
+        account.rebuild_running_totals()
+
+        inserted = threading.Event()
+        committed = threading.Event()
+        rebuilt = threading.Event()
+
+        def higher_committer():
+            try:
+                inserted.wait(timeout=30)
+                self._post(account, offset, 1)
+            finally:
+                committed.set()
+                connection.close()
+
+        def rebuilder():
+            try:
+                committed.wait(timeout=30)
+                account.rebuild_running_totals()
+            finally:
+                rebuilt.set()
+                connection.close()
+
+        self._run(
+            self._straggler(account, offset, inserted, rebuilt),
+            higher_committer,
+            rebuilder,
+        )
+
+        self.assertEqual(account.check_running_totals(), [])
+        expected = (10 + 5 + 1) * account.sign
+        self.assertEqual(
+            account.simple_balance(), Balance([Money(expected, "EUR")])
+        )
+
+    def test_rebuild_skips_and_reports_while_a_leg_writer_is_active(self):
+        account = self.account()
+        offset = self.account()
+        self._post(account, offset, 10)
+
+        inserted = threading.Event()
+        release = threading.Event()
+        worker = self._straggler(account, offset, inserted, release)
+        thread = threading.Thread(target=worker)
+        thread.start()
+        self.assertTrue(inserted.wait(timeout=30))
+        try:
+            ran = account.rebuild_running_totals()
+        finally:
+            release.set()
+            thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
+
+        self.assertFalse(ran)
+        self.assertEqual(account.running_totals.count(), 0)
+        self.assertTrue(account.rebuild_running_totals())
+        self.assertEqual(account.running_totals.count(), 1)

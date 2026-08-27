@@ -59,7 +59,19 @@ class Command(BaseCommand):
                 else "Running totals are correct"
             )
 
+        rebuilt = 0
+        skipped = []
         for account in queryset.all():
-            account.rebuild_running_totals(keep_history=options["keep_history"])
+            if account.rebuild_running_totals(keep_history=options["keep_history"]):
+                rebuilt += 1
+            else:
+                skipped.append(account.name)
 
-        return f"Rebuilt running total checkpoints for {queryset.count()} accounts."
+        result = f"Rebuilt running total checkpoints for {rebuilt} accounts."
+        if skipped:
+            result += (
+                f"\nSkipped {len(skipped)} accounts because concurrent "
+                f"transactions were inserting legs; run again to retry: "
+                + ", ".join(skipped)
+            )
+        return result

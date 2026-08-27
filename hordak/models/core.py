@@ -23,7 +23,7 @@ Additionally, there are models which related to the import of external bank stat
 
 import logging
 
-from django.db import connection, models
+from django.db import DEFAULT_DB_ALIAS, connection, connections, models
 from django.db import transaction
 from django.db import transaction as db_transaction
 from django.db.models import JSONField, Max
@@ -526,6 +526,46 @@ class Account(MPTTModel):
     def _running_total_current_leg_id(self):
         return self.legs.order_by("-id").values_list("id", flat=True).first() or 0
 
+    def _running_total_safe_cutoff(self):
+        """Highest leg id that is safe to build a checkpoint up to, or None.
+
+        ``max(leg id)`` alone is not a safe cutoff: a transaction holding
+        *lower* leg ids may still be in flight and commit afterwards, and
+        because every checkpoint builds on the previous balance, the omitted
+        legs would be excluded from every later balance -- permanently, as a
+        constant offset. ``select_for_update()`` on the account does not
+        protect against this (foreign keys are DEFERRABLE INITIALLY DEFERRED,
+        so inserters take no account lock until commit) and signals cannot
+        repair it (``bulk_create`` sends none).
+
+        What an in-flight inserter does hold is ``RowExclusiveLock`` on the
+        leg table. So: first look for other transactions holding that lock,
+        then read ``max(id)``. In READ COMMITTED, any transaction that
+        allocated a lower leg id before our read either committed (and is
+        visible to it) or still holds the table lock (and was detected);
+        writers starting after the lock check allocate higher ids. When a
+        concurrent writer is detected we return None and the caller skips
+        this round -- balances stay correct via the full-sum fallback and
+        building catches up at the next quiet moment.
+        """
+        conn = connections[self._state.db or DEFAULT_DB_ALIAS]
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*) FROM pg_locks
+                WHERE relation = %s::regclass
+                  AND mode = 'RowExclusiveLock'
+                  AND granted
+                  AND pid <> pg_backend_pid()
+                """,
+                [conn.ops.quote_name(Leg._meta.db_table)],
+            )
+            concurrent_writers = cursor.fetchone()[0]
+        if concurrent_writers:
+            return None
+
+        return self._running_total_current_leg_id()
+
     def _running_total_latest_checkpoints(self, as_of_leg_id=None):
         running_totals = self.running_totals.order_by("-includes_leg_id")
         if as_of_leg_id is not None:
@@ -566,7 +606,7 @@ class Account(MPTTModel):
         with db_transaction.atomic():
             Account.objects.select_for_update().filter(pk=self.pk).first()
 
-            current_leg_id = self._running_total_current_leg_id()
+            current_leg_id = self._running_total_safe_cutoff()
             if not current_leg_id:
                 return
 
@@ -622,12 +662,21 @@ class Account(MPTTModel):
                     )
 
     def rebuild_running_totals(self, keep_history=False):
+        """Rebuild checkpoints from a full sum.
+
+        Returns True if the rebuild ran, False if it was skipped because a
+        concurrent transaction was inserting legs (see
+        _running_total_safe_cutoff); retry in a quieter moment.
+        """
         with db_transaction.atomic():
             Account.objects.select_for_update().filter(pk=self.pk).first()
-            current_leg_id = self._running_total_current_leg_id()
+            current_leg_id = self._running_total_safe_cutoff()
+            if current_leg_id is None:
+                return False
             if not keep_history:
                 self.running_totals.all().delete()
             self._append_running_totals_from_full_sum(current_leg_id=current_leg_id)
+            return True
 
     def invalidate_running_totals(self):
         self.running_totals.all().delete()
