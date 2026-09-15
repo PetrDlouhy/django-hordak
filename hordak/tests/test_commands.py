@@ -1,5 +1,5 @@
 from django.core import mail
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.db import transaction as db_transaction
 from django.db.models import Max
 from django.test import override_settings
@@ -146,7 +146,9 @@ class RecalculateRunningTotalsTestCase(DataProvider, DbTransactionTestCase):
         running_total.balance = Money(200, "EUR")
         running_total.save()
 
-        ret_val = call_command("recalculate_running_totals", *["--check"])
+        with self.assertRaises(CommandError) as raised:
+            call_command("recalculate_running_totals", *["--check"])
+        ret_val = str(raised.exception)
         self.assertIn("Running totals are INCORRECT", ret_val)
         self.assertIn("Account Account 1 has faulty running total for EUR", ret_val)
         self.assertRegex(ret_val, r"100")
@@ -174,7 +176,9 @@ class RecalculateRunningTotalsTestCase(DataProvider, DbTransactionTestCase):
             )
         account1.running_totals.update(balance=Money(999, "EUR"))
 
-        ret_val = call_command("recalculate_running_totals", "--check")
+        with self.assertRaises(CommandError) as raised:
+            call_command("recalculate_running_totals", "--check")
+        ret_val = str(raised.exception)
 
         self.assertIn("Account Account 1 has faulty running total for EUR", ret_val)
         self.assertIn("effective", ret_val)
@@ -219,9 +223,9 @@ class RecalculateRunningTotalsTestCase(DataProvider, DbTransactionTestCase):
         running_total.balance = Money(200, "EUR")
         running_total.save()
 
-        ret_val = call_command(
-            "recalculate_running_totals", *["--check", "--mail-admins"]
-        )
+        with self.assertRaises(CommandError) as raised:
+            call_command("recalculate_running_totals", *["--check", "--mail-admins"])
+        ret_val = str(raised.exception)
         self.assertIn("Running totals are INCORRECT", ret_val)
         self.assertIn("Account Account 1 has faulty running total for EUR", ret_val)
         self.assertEqual(len(mail.outbox), 1)
