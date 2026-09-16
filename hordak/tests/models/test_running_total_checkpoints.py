@@ -5,7 +5,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.core import mail
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.db import connection
 from django.db import transaction as db_transaction
 from django.test import override_settings
@@ -630,16 +630,17 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
         self._post(account, offset, 12)
         account.rebuild_running_totals()
         account.running_totals.update(balance=Money(999, "EUR"))
-        stdout = StringIO()
 
-        call_command("recalculate_running_totals", "--check", stdout=stdout)
+        with self.assertRaises(CommandError) as raised:
+            call_command("recalculate_running_totals", "--check", stdout=StringIO())
 
+        message = str(raised.exception)
+        self.assertIn("Running totals are INCORRECT", message)
         self.assertIn(
-            f"Account {account.name} has faulty running total for EUR",
-            stdout.getvalue(),
+            f"Account {account.name} has faulty running total for EUR", message
         )
-        self.assertIn("effective", stdout.getvalue())
-        self.assertIn("should be", stdout.getvalue())
+        self.assertIn("effective", message)
+        self.assertIn("should be", message)
 
     @override_settings(ADMINS=[("Admin", "admin@example.com")])
     def test_recalculate_running_totals_command_check_can_mail_admins(self):
@@ -649,7 +650,8 @@ class RunningTotalCheckpointTests(DataProvider, DbTransactionTestCase):
         account.rebuild_running_totals()
         account.running_totals.update(balance=Money(999, "EUR"))
 
-        call_command("recalculate_running_totals", "--check", "--mail-admins")
+        with self.assertRaises(CommandError):
+            call_command("recalculate_running_totals", "--check", "--mail-admins")
 
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Running totals are incorrect", mail.outbox[0].subject)

@@ -1,5 +1,5 @@
 from django.core.mail import mail_admins
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from hordak.models import Account, Leg
 
@@ -55,8 +55,9 @@ class Command(BaseCommand):
                 )
 
             if output:
-                self.stdout.write("Running totals are INCORRECT:\n\n{}".format(output))
-                return
+                # A non-zero exit: schedulers and monitors that only see the exit
+                # status must not record a night with faulty totals as a success.
+                raise CommandError("Running totals are INCORRECT:\n\n{}".format(output))
 
             self.stdout.write("Running totals are correct")
             return
