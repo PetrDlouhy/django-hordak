@@ -1,5 +1,6 @@
 import logging
 import threading
+import unittest
 from unittest.mock import patch
 
 from django.db import DEFAULT_DB_ALIAS, connection, connections
@@ -827,6 +828,10 @@ class SafeCutoffBackendTests(DataProvider, TestCase):
         self.assertIn("unguarded on mysql", logs.output[0])
 
 
+@unittest.skipUnless(
+    connection.vendor == "postgresql",
+    "the in-flight-writer guard exists only on PostgreSQL; other backends fall back to the unguarded cutoff",
+)
 class UncommittedLegCutoffTests(DataProvider, TransactionTestCase):
     """A checkpoint must never claim to include a leg it could not see.
 
