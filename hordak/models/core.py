@@ -648,9 +648,6 @@ class Account(MPTTModel):
         self.rebuild_running_totals(keep_history=keep_history)
         return faulty_values
 
-    def invalidate_running_totals(self):
-        self.running_totals.all().delete()
-
     def _zero_balance(self):
         """Get a balance for this account with all currencies set to zero"""
         return Balance([Money("0", currency) for currency in self.currencies])

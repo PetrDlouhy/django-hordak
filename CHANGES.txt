@@ -1,7 +1,13 @@
 2.0.1 (unreleased)
 ==================
 
-- Nothing changed yet.
+* Added opt-in running total checkpoints (PostgreSQL only). A ``RunningTotal`` row
+  stores an account's balance per currency as of a leg id, so
+  ``Account.get_simple_balance()`` reads checkpoint + delta instead of summing every
+  leg. Off by default and free when off: set ``HORDAK_CHECKPOINT_THRESHOLD`` to
+  auto-advance checkpoints on commit, and build (``recalculate_running_totals``) or
+  verify (``--check``, ``--mail-admins``) them from cron. Adds migration 0055
+  (``hordak_runningtotal`` table, ``(account, -id)`` index on ``hordak_leg``).
 
 
 2.0.0 (2024-11-29)
