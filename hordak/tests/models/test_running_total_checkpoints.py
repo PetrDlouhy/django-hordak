@@ -881,9 +881,7 @@ class UncommittedLegCutoffTests(DataProvider, TransactionTestCase):
 
         self.assertEqual(account.check_running_totals(), [])
         expected = (10 + 5 + 4) * account.sign
-        self.assertEqual(
-            account.simple_balance(), Balance([Money(expected, "EUR")])
-        )
+        self.assertEqual(account.simple_balance(), Balance([Money(expected, "EUR")]))
 
     @override_settings(HORDAK_CHECKPOINT_THRESHOLD=0)
     def test_rebuild_does_not_skip_an_uncommitted_bulk_create(self):
@@ -920,9 +918,7 @@ class UncommittedLegCutoffTests(DataProvider, TransactionTestCase):
 
         self.assertEqual(account.check_running_totals(), [])
         expected = (10 + 5 + 1) * account.sign
-        self.assertEqual(
-            account.simple_balance(), Balance([Money(expected, "EUR")])
-        )
+        self.assertEqual(account.simple_balance(), Balance([Money(expected, "EUR")]))
 
     def test_rebuild_skips_and_reports_while_a_leg_writer_is_active(self):
         account = self.account()
