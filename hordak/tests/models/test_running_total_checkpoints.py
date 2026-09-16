@@ -2,7 +2,7 @@ import logging
 import threading
 from unittest.mock import patch
 
-from django.db import connection
+from django.db import DEFAULT_DB_ALIAS, connection, connections
 from django.db import transaction as db_transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
@@ -800,6 +800,31 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
             .first()
         )
         self.assertEqual(new_rt.balance, Money(100, "EUR"))
+
+
+class SafeCutoffBackendTests(DataProvider, TestCase):
+    def test_non_postgresql_backends_fall_back_to_the_unguarded_cutoff(self):
+        account = self.account()
+        other = self.account()
+        with db_transaction.atomic():
+            transaction = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=transaction, account=account, amount=Money(5, "EUR")
+            )
+            Leg.objects.create(
+                transaction=transaction, account=other, amount=Money(-5, "EUR")
+            )
+
+        with patch.object(
+            type(connections[DEFAULT_DB_ALIAS]), "vendor", "mysql"
+        ), CaptureQueriesContext(connection) as queries, self.assertLogs(
+            "hordak.models.core", level="WARNING"
+        ) as logs:
+            cutoff = account._running_total_safe_cutoff()
+
+        self.assertEqual(cutoff, account._running_total_current_leg_id())
+        self.assertFalse(any("pg_locks" in q["sql"] for q in queries.captured_queries))
+        self.assertIn("unguarded on mysql", logs.output[0])
 
 
 class UncommittedLegCutoffTests(DataProvider, TransactionTestCase):

@@ -549,6 +549,16 @@ class Account(MPTTModel):
         building catches up at the next quiet moment.
         """
         conn = connections[self._state.db or DEFAULT_DB_ALIAS]
+        if conn.vendor != "postgresql":
+            # Only PostgreSQL exposes the lock visibility the guard needs; other
+            # backends get the unguarded cutoff this method replaced, so their
+            # checkpoints can still race in-flight inserts (see the docstring).
+            logger.warning(
+                "Running total cutoff is unguarded on %s: in-flight inserts can be "
+                "missed by a checkpoint; run recalculate_running_totals --check regularly.",
+                conn.vendor,
+            )
+            return self._running_total_current_leg_id()
         with conn.cursor() as cursor:
             cursor.execute(
                 """
