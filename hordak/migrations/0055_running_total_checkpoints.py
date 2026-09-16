@@ -70,11 +70,4 @@ class Migration(migrations.Migration):
                 ],
             },
         ),
-        migrations.AddIndex(
-            model_name="leg",
-            index=models.Index(
-                fields=["account", "-id"],
-                name="hordak_leg_acc_id_desc_idx",
-            ),
-        ),
     ]

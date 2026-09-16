@@ -32,7 +32,7 @@ def migration_operations_from_sql(file_path: Path):
     return operations
 
 
-T = TypeVar("T", bound=migrations.RunSQL)
+T = TypeVar("T")
 
 
 def select_database_type(postgresql: T, mysql: T) -> T:
