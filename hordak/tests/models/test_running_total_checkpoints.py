@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 from django.core import mail
 from django.core.management import CommandError, call_command
-from django.db import connection
+from django.db import DEFAULT_DB_ALIAS, connection, connections
 from django.db import transaction as db_transaction
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.test.testcases import TransactionTestCase as DbTransactionTestCase
 from django.test.utils import CaptureQueriesContext
 from moneyed import Money
@@ -1167,3 +1167,115 @@ class SafeCutoffSkipTests(DataProvider, DbTransactionTestCase):
             seed,
         )
         self.assertEqual(account.check_running_totals(), [])
+
+
+class SafeCutoffBackendTests(DataProvider, TestCase):
+    """Checkpoint building refuses backends without the lock visibility it needs."""
+
+    def test_non_postgresql_backend_raises_instead_of_guessing_a_cutoff(self):
+        account = self.account(type=AccountType.income)
+
+        with patch.object(type(connections[DEFAULT_DB_ALIAS]), "vendor", "mysql"):
+            with self.assertRaises(NotImplementedError):
+                account._running_total_safe_cutoff()
+
+
+class RecalculateRunningTotalsSkipReportTests(DataProvider, TestCase):
+    def test_rebuild_names_the_accounts_skipped_for_concurrent_writers(self):
+        busy = self.account(type=AccountType.income, name="Busy")
+        quiet = self.account(type=AccountType.income, name="Quiet")
+        with db_transaction.atomic():
+            transaction = Transaction.objects.create()
+            Leg.objects.create(
+                transaction=transaction, account=busy, credit=Money(5, "EUR")
+            )
+            Leg.objects.create(
+                transaction=transaction, account=quiet, debit=Money(5, "EUR")
+            )
+
+        out = StringIO()
+        with patch.object(
+            Account,
+            "rebuild_running_totals",
+            autospec=True,
+            side_effect=lambda self, keep_history=False: self.name == "Quiet",
+        ):
+            call_command("recalculate_running_totals", stdout=out)
+
+        self.assertIn(
+            "Rebuilt running total checkpoints for 1 accounts.", out.getvalue()
+        )
+        self.assertIn(
+            "Skipped 1 accounts because concurrent transactions were inserting legs; "
+            "run again to retry: Busy",
+            out.getvalue(),
+        )
+
+
+@requires_postgresql
+class OnCommitMaintenanceTests(DataProvider, DbTransactionTestCase):
+    """The per-transaction on-commit callback: one per account, merged, rollback-safe."""
+
+    def _post(self, credit_account, debit_account, amount, currency="EUR"):
+        transaction = Transaction.objects.create()
+        credit = Leg.objects.create(
+            transaction=transaction,
+            account=credit_account,
+            credit=Money(amount, currency),
+        )
+        Leg.objects.create(
+            transaction=transaction,
+            account=debit_account,
+            debit=Money(amount, currency),
+        )
+        return transaction, credit
+
+    def _callbacks_for(self, account_id):
+        return [
+            entry[1]
+            for entry in connection.run_on_commit
+            if getattr(entry[1], "_hordak_checkpoint_account", None) == account_id
+        ]
+
+    @override_settings(HORDAK_CHECKPOINT_THRESHOLD=1)
+    def test_leg_writes_in_one_transaction_share_one_merged_callback(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        with db_transaction.atomic():
+            self._post(account, offset, 10)
+        account.rebuild_running_totals()
+
+        with db_transaction.atomic():
+            _, first = self._post(account, offset, 1)
+            _, second = self._post(account, offset, 2)
+
+            callbacks = self._callbacks_for(account.pk)
+            self.assertEqual(len(callbacks), 1)
+            self.assertEqual(
+                callbacks[0]._hordak_checkpoint_state,
+                {"invalidate": False, "currencies": {"EUR": [first.pk, second.pk]}},
+            )
+
+        checkpoint = account.running_totals.order_by("-includes_leg_id").first()
+        self.assertEqual(checkpoint.includes_leg_id, second.pk)
+        self.assertEqual(account.get_simple_balance(), Balance([Money(13, "EUR")]))
+
+    @override_settings(HORDAK_CHECKPOINT_THRESHOLD=1)
+    def test_maintenance_is_a_no_op_when_the_account_is_gone_at_commit(self):
+        account = self.account(type=AccountType.income)
+        offset = self.account(type=AccountType.income)
+        account_id = account.pk
+        with db_transaction.atomic():
+            transaction, _ = self._post(account, offset, 10)
+        account.rebuild_running_totals()
+
+        with db_transaction.atomic():
+            # Deleting legs invalidates the checkpoint and schedules the fenced
+            # re-invalidation; the account is gone by the time it runs.
+            transaction.delete()
+            account.delete()
+            self.assertEqual(len(self._callbacks_for(account_id)), 1)
+
+        self.assertFalse(Account.objects.filter(pk=account_id).exists())
+        self.assertFalse(RunningTotal.objects.filter(account_id=account_id).exists())
+        self.assertEqual(offset.running_totals.count(), 0)
