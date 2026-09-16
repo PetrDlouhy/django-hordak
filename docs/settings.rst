@@ -64,8 +64,14 @@ O(all legs) on busy accounts.
 Left at ``0`` (the default), no checkpoints are built automatically and leg
 creation performs no extra queries. Checkpoints can still be built manually
 with the ``recalculate_running_totals`` management command, which also
-supports ``--check`` (verify checkpoints against full sums, optionally
-``--mail-admins``) and ``--keep-history``.
+supports ``--check`` (verify checkpoints against full sums, exit non-zero and
+optionally ``--mail-admins`` when one is wrong) and ``--keep-history``.
+
+Automatic advancing only maintains checkpoints that already exist: after
+enabling the setting, run ``recalculate_running_totals`` once to build the
+first checkpoint for every account (and again for accounts created later, or
+schedule it). Editing or deleting a leg drops the affected account's
+checkpoints, so its reads fall back to the full sum until the next advance.
 
 Checkpoints require PostgreSQL: choosing a cutoff that cannot race in-flight
 inserts relies on lock visibility (``pg_locks``) that other backends do not
