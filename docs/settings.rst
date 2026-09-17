@@ -80,3 +80,9 @@ expose. On other databases the checkpoint-building entry points raise
 also skips any round during which another transaction is inserting legs, and
 catches up at the next quiet moment -- on a ledger with continuous writes,
 checkpoints advance in the gaps.
+
+What every installation pays, whether or not the setting is enabled: the
+``(account, -id)`` index on ``hordak_leg`` (migration 0056, built
+``CONCURRENTLY`` on PostgreSQL), and one query per affected account when a leg
+is updated or deleted, which drops checkpoints that may exist. Creating legs
+costs nothing extra while the setting is ``0``.
