@@ -979,7 +979,7 @@ class LegTestCase(DataProvider, DbTransactionTestCase):
 
         legs = (
             Leg.objects.filter(account=src)
-            .order_by("transaction__date")
+            .order_by("transaction__date", "id")
             .with_account_balance_after()
         )
         self.assertEqual(legs[0].account_balance_after, Balance("110", "EUR"))
@@ -1002,7 +1002,7 @@ class LegTestCase(DataProvider, DbTransactionTestCase):
 
         legs = (
             Leg.objects.filter(account=src)
-            .order_by("transaction__date")
+            .order_by("transaction__date", "id")
             .with_account_balance_before()
         )
         self.assertEqual(legs[0].account_balance_before, Balance("0", "EUR"))
