@@ -70,8 +70,14 @@ optionally ``--mail-admins`` when one is wrong) and ``--keep-history``.
 Automatic advancing only maintains checkpoints that already exist: after
 enabling the setting, run ``recalculate_running_totals`` once to build the
 first checkpoint for every account (and again for accounts created later, or
-schedule it). Editing or deleting a leg drops the affected account's
-checkpoints, so its reads fall back to the full sum until the next advance.
+schedule it). Editing or deleting a leg through the ORM drops the affected
+account's checkpoints, so its reads fall back to the full sum until the next
+advance. Writes that bypass Django's signals (raw SQL, other applications
+sharing the database, ``QuerySet.update()``) are handled differently: inserted
+legs are always counted, because a read sums every committed leg after the
+checkpoint, but an update or delete of an already-counted leg leaves a stale
+checkpoint until the next rebuild. Schedule ``recalculate_running_totals``
+(or ``--check``) if such writes happen on your ledger.
 
 Checkpoints require PostgreSQL: choosing a cutoff that cannot race in-flight
 inserts relies on lock visibility (``pg_locks``) that other backends do not
