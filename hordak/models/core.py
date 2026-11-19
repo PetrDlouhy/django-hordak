@@ -577,13 +577,21 @@ class Account(MPTTModel):
         return self._running_total_current_leg_id()
 
     def _running_total_latest_checkpoints(self, as_of_leg_id=None):
-        running_totals = self.running_totals.order_by("-includes_leg_id")
+        # advance_checkpoint() appends and nothing prunes, so a busy account has
+        # thousands of checkpoints. Walk the (account, currency, -includes_leg_id)
+        # index one currency at a time: each query reads the newest checkpoint of
+        # the next currency, never the history.
+        running_totals = self.running_totals.order_by("currency", "-includes_leg_id")
         if as_of_leg_id is not None:
             running_totals = running_totals.filter(includes_leg_id__lte=as_of_leg_id)
 
         checkpoints = {}
-        for running_total in running_totals:
-            checkpoints.setdefault(running_total.currency, running_total)
+        running_total = running_totals.first()
+        while running_total is not None:
+            checkpoints[running_total.currency] = running_total
+            running_total = running_totals.filter(
+                currency__gt=running_total.currency
+            ).first()
         return checkpoints
 
     def _running_total_full_signed_balance(self, as_of_leg_id=None):

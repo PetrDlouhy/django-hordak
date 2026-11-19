@@ -803,6 +803,110 @@ class CheckRunningTotalsTests(DataProvider, TestCase):
         self.assertEqual(new_rt.balance, Money(100, "EUR"))
 
 
+class LatestCheckpointsTests(DataProvider, TestCase):
+    def _checkpoint(self, account, currency, includes_leg_id):
+        return RunningTotal.objects.create(
+            account=account,
+            currency=currency,
+            balance=Money(includes_leg_id, currency),
+            includes_leg_id=includes_leg_id,
+        )
+
+    def test_read_does_not_grow_with_checkpoint_history(self):
+        account = self.account(currencies=["EUR", "USD"])
+        RunningTotal.objects.bulk_create(
+            RunningTotal(
+                account=account,
+                currency=currency,
+                balance=Money(leg_id, currency),
+                includes_leg_id=leg_id,
+            )
+            for currency in ("EUR", "USD")
+            for leg_id in range(1, 31)
+        )
+
+        for as_of_leg_id in (None, 30):
+            with self.subTest(as_of_leg_id=as_of_leg_id):
+                with patch.object(
+                    RunningTotal, "from_db", wraps=RunningTotal.from_db
+                ) as from_db, CaptureQueriesContext(connection) as queries:
+                    checkpoints = account._running_total_latest_checkpoints(
+                        as_of_leg_id=as_of_leg_id
+                    )
+
+                self.assertEqual(
+                    {
+                        currency: running_total.includes_leg_id
+                        for currency, running_total in checkpoints.items()
+                    },
+                    {"EUR": 30, "USD": 30},
+                )
+                # Checkpoints are appended forever: the read must fetch one row
+                # per currency, not the account's whole history (60 rows here).
+                self.assertEqual(from_db.call_count, 2)
+                self.assertEqual(len(queries), 3)
+
+    def test_returns_the_newest_checkpoint_of_each_currency(self):
+        account = self.account(currencies=["EUR", "USD"])
+        other = self.account(currencies=["EUR", "GBP"])
+        self._checkpoint(account, "EUR", 10)
+        newest_eur = self._checkpoint(account, "EUR", 30)
+        self._checkpoint(account, "EUR", 20)
+        newest_usd = self._checkpoint(account, "USD", 20)
+        self._checkpoint(account, "USD", 5)
+        self._checkpoint(other, "EUR", 40)
+        self._checkpoint(other, "GBP", 40)
+
+        self.assertEqual(
+            account._running_total_latest_checkpoints(),
+            {"EUR": newest_eur, "USD": newest_usd},
+        )
+
+    def test_returns_a_currency_the_account_no_longer_lists(self):
+        account = self.account(currencies=["EUR"])
+        eur = self._checkpoint(account, "EUR", 10)
+        usd = self._checkpoint(account, "USD", 10)
+
+        self.assertEqual(
+            account._running_total_latest_checkpoints(), {"EUR": eur, "USD": usd}
+        )
+
+    def test_as_of_leg_id_returns_the_newest_checkpoint_up_to_it(self):
+        account = self.account()
+        older = self._checkpoint(account, "EUR", 10)
+        newer = self._checkpoint(account, "EUR", 20)
+
+        self.assertEqual(
+            account._running_total_latest_checkpoints(as_of_leg_id=15),
+            {"EUR": older},
+        )
+        self.assertEqual(
+            account._running_total_latest_checkpoints(as_of_leg_id=20),
+            {"EUR": newer},
+        )
+
+    def test_as_of_leg_id_applies_to_each_currency(self):
+        account = self.account(currencies=["EUR", "USD"])
+        self._checkpoint(account, "EUR", 20)
+        usd = self._checkpoint(account, "USD", 10)
+        self._checkpoint(account, "USD", 20)
+
+        self.assertEqual(
+            account._running_total_latest_checkpoints(as_of_leg_id=15), {"USD": usd}
+        )
+
+    def test_as_of_leg_id_older_than_every_checkpoint_returns_nothing(self):
+        account = self.account()
+        self._checkpoint(account, "EUR", 10)
+
+        self.assertEqual(account._running_total_latest_checkpoints(as_of_leg_id=9), {})
+
+    def test_no_checkpoints_returns_nothing(self):
+        account = self.account()
+
+        self.assertEqual(account._running_total_latest_checkpoints(), {})
+
+
 class SafeCutoffBackendTests(DataProvider, TestCase):
     def test_non_postgresql_backends_fall_back_to_the_unguarded_cutoff(self):
         account = self.account()
