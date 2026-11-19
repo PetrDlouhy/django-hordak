@@ -444,6 +444,14 @@ class AccountTestCase(DataProvider, DbTransactionTestCase):
         self.assertEqual(account2.full_code, "A0")
         self.assertEqual(account3.full_code, "A09")
 
+    def test_refreshing_other_fields_keeps_an_unsaved_code(self):
+        account = self.account(code="5")
+        account.code = "A"
+
+        account.refresh_from_db(fields=["lft", "rght", "tree_id", "level"])
+
+        self.assertEqual(account.code, "A")
+
     def test_full_code_changes_on_update_with_null_code(self):
         account1 = self.account(code="5")
         account2 = self.account(parent=account1, code="0")
