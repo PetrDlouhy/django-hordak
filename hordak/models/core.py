@@ -213,7 +213,16 @@ class Account(MPTTModel):
 
     def __init__(self, *args, **kwargs):
         super(Account, self).__init__(*args, **kwargs)
-        self._initial_code = self.code
+        # Reading a deferred ``code`` would load it from the database. On the
+        # partial instance that refresh_from_db(fields=[...]) builds, that marks
+        # ``code`` as loaded, so the refresh overwrote an unsaved code with the
+        # stored one. django-mptt >= 0.19 does such a refresh of the tree fields
+        # whenever a save moves the node, which a code change does
+        # (order_insertion_by), so a changed code was never saved.
+        if "code" in self.get_deferred_fields():
+            self._initial_code = None
+        else:
+            self._initial_code = self.code
 
     def save(self, *args, **kwargs):
         is_creating = not bool(self.pk)
